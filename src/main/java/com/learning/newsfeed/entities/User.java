@@ -31,5 +31,6 @@ public class User implements DynamoDbBaseEntity {
     private String username;
     private String passwordHash;
     private String displayName;
+    private int followersCount;
     private LocalDateTime createdAt;
 }

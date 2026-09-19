@@ -261,6 +261,7 @@ Feeds pagination should use cursor-based pagination rather than offset-based pag
     - **Columns:**
         - `username` (string)
         - `displayName` (string)
+        - `followersCount` (number)
         - `createdAt` (datetime)
 
 - **Table: `followers`**
