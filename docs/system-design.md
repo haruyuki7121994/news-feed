@@ -281,6 +281,15 @@ Feeds pagination should use cursor-based pagination rather than offset-based pag
       - `publishedAt` (datetime)
       - `retryCount` (number)
       - `expiresAt` (number)
+
+**Table: `idempotencyKeys`**
+  - **Primary Key:** `{type}#{userId}#{idempotencyKey}`
+  - **Columns:**
+      - `requestHash` (string)
+      - `postId` (string)
+      - `eventId` (string)
+      - `createdAt` (datetime)
+      - `expiresAt` (number)
     
 **Table:** `userFeeds`
   - **Columns:**

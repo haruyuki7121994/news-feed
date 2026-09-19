@@ -112,6 +112,24 @@ Resources:
       StreamSpecification:
         StreamViewType: NEW_IMAGE
 
+  IdempotencyKeysTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: idempotencyKeys
+      BillingMode: PAY_PER_REQUEST
+      # Other attributes.
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+
 Outputs:
   PostsTableName:
     Value: !Ref PostsTable
@@ -131,3 +149,7 @@ Outputs:
     Value: !GetAtt OutboxesTable.Arn
   EventSourceArn:
     Value: !GetAtt OutboxesTable.StreamArn
+  IdempotencyKeysTableName:
+    Value: !Ref IdempotencyKeysTable
+  IdempotencyKeysTableArn:
+    Value: !GetAtt IdempotencyKeysTable.Arn

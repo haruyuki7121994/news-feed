@@ -25,20 +25,22 @@ public class CreatePostDTO {
     @NotBlank(message = "Text is required")
     private String text;
     private String userId;
+    private String idempotencyKey;
     private List<String> medias;
 
     public static Post toNewEntity(CreatePostDTO dto, String userId) {
         LocalDateTime now = LocalDateTime.now();
         String nowYYYYMM = TimeUtil.formatYYYYMM(now).getOrElseThrow(e -> new RuntimeException(e));
         String nowTime = TimeUtil.formatYYYYMMDDHHMMSS(now).getOrElseThrow(e -> new RuntimeException(e));
+        String postId = POST_PREFIX + UUID.randomUUID();
         return Post.builder()
-                .postId(POST_PREFIX + UUID.randomUUID())
+                .postId(postId)
                 .authorId(userId)
                 .text(dto.getText())
                 .mediaIds(dto.getMedias())
                 .createdAt(now)
                 .postByAuthorPk(String.format("%s#%s", POST_BY_AUTHOR_PREFIX + userId, nowYYYYMM))
-                .postByAuthorSk(String.format("%s#%s", nowTime, userId))
+                .postByAuthorSk(String.format("%s#%s", nowTime, postId))
                 .build();
     }
 }
