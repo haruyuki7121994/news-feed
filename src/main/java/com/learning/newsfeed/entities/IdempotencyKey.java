@@ -30,5 +30,7 @@ public class IdempotencyKey implements DynamoDbBaseEntity {
 
     public enum IdemType {
         CREATE_POST,
+        FOLLOW,
+        UNFOLLOW,
     }
 }

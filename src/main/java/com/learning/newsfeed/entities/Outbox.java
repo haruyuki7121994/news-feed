@@ -41,6 +41,7 @@ public class Outbox implements DynamoDbBaseEntity {
         POST_CREATED,
         POST_UPDATED,
         POST_DELETED,
+        UNFOLLOWED,
     }
 
     public enum EventStatus {
