@@ -1,0 +1,133 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: DynamoDB tables for posts, users, and followers.
+
+# Only table/index key attributes belong in AttributeDefinitions.
+# Your application writes the remaining attributes and constructs key values.
+# Dates: use consistent UTC ISO 8601 strings, e.g. 2026-09-18T10:00:00.000Z.
+# mediaIds: a DynamoDB List of strings. deletedAt: omit or store NULL when unset.
+# deletedAt is a soft-delete field; it is not configured as DynamoDB TTL.
+
+Resources:
+  PostsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: posts
+      BillingMode: PAY_PER_REQUEST
+      # PK = POST#{postId}
+      # Other attributes: authorId, text, mediaIds, createdAt, deletedAt.
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: GSI1PK
+          AttributeType: S
+        - AttributeName: GSI1SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1
+          # GSI1PK = AUTHOR#{authorId}#{month}; month format: YYYY-MM.
+          # GSI1SK = {createdAt}#{postId}; substitute the timestamp value.
+          KeySchema:
+            - AttributeName: GSI1PK
+              KeyType: HASH
+            - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: users
+      BillingMode: PAY_PER_REQUEST
+      # PK = USER#{userId}
+      # Other attributes: username, displayName, createdAt.
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+
+  FollowersTable:
+    Type: AWS::DynamoDB::Table
+    # Serialize creation of tables with GSIs per CloudFormation guidance.
+    DependsOn: PostsTable
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: followers
+      BillingMode: PAY_PER_REQUEST
+      # PK = USER#{userId}; SK = FOLLOWER#{followerId}
+      # Other attributes: createdAt.
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: GSI1PK
+          AttributeType: S
+        - AttributeName: GSI1SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1
+          # GSI1PK = FOLLOWER#{followerId}; GSI1SK = USER#{userId}
+          KeySchema:
+            - AttributeName: GSI1PK
+              KeyType: HASH
+            - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  OutboxesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: outboxes
+      BillingMode: PAY_PER_REQUEST
+      # PK = EVENT#{eventId}
+      # Other attributes.
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+
+Outputs:
+  PostsTableName:
+    Value: !Ref PostsTable
+  PostsTableArn:
+    Value: !GetAtt PostsTable.Arn
+  UsersTableName:
+    Value: !Ref UsersTable
+  UsersTableArn:
+    Value: !GetAtt UsersTable.Arn
+  FollowersTableName:
+    Value: !Ref FollowersTable
+  FollowersTableArn:
+    Value: !GetAtt FollowersTable.Arn
+  OutboxesTableName:
+    Value: !Ref OutboxesTable
+  OutboxesTableArn:
+    Value: !GetAtt OutboxesTable.Arn
+  EventSourceArn:
+    Value: !GetAtt OutboxesTable.StreamArn

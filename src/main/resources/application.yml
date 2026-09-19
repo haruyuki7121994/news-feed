@@ -8,3 +8,24 @@ spring:
       credentials:
         access-key: ${AWS_ACCESS_KEY}
         secret-key: ${AWS_SECRET_KEY}
+  data:
+    redis:
+      host: redis-15872.crce264.ap-east-1-1.ec2.cloud.redislabs.com
+      username: default
+      password: ${REDIS_PASSWORD}
+      port: 15872
+      database: 0
+      ssl:
+        enabled: false
+app:
+  jwt:
+    public-key: classpath:secrets/public.pem
+    private-key: classpath:secrets/private.pem
+
+logging:
+  level:
+    org:
+      springframework:
+        security:
+          web:
+            FilterChainProxy: TRACE

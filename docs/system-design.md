@@ -115,14 +115,8 @@ Feeds pagination should use cursor-based pagination rather than offset-based pag
         "mediaIds": ["1", "2", "3"]
     }
     ```
-- Response:
-    ```json
-    {
-      "postId": "984728374982374",
-      "authorId": "123",
-      "createdAt": "2026-09-16T02:00:00Z"
-  }
-  ```
+- Response: 201 CREATED
+
 ### NEWS FEED
 - Method: GET
 - URL: /feed?limit=20&cursor=1234567890
@@ -257,8 +251,8 @@ Feeds pagination should use cursor-based pagination rather than offset-based pag
         - `createdAt` (datetime)
         - `deletedAt` (datetime - nullable)
     - **Global Secondary Index (GSI):**
-        - GSI1PK = `AUTHOR#{authorId}#{month}`
-        - GSI1SK = `createdAt#{postId}`
+        - GSI1PK = `AUTHOR#{authorId}#{month:yyyy-MM}`
+        - GSI1SK = `{createdAt}#{postId}`
 
 - **Table: `users`**
     - **Primary Key:** `USER#{userId}`
@@ -275,6 +269,25 @@ Feeds pagination should use cursor-based pagination rather than offset-based pag
     - **GSI (for reverse lookup):**
         - GSI1PK = `FOLLOWER#{followerId}`
         - GSI1SK = `USER#{userId}`
+
+**Table: `outboxes`**
+  - **Primary Key:** `EVENT#{eventId}`
+  - **Columns:**
+      - `eventType` (string)
+      - `aggregateId` (string)
+      - `payload` (string)
+      - `status` (string)
+      - `createdAt` (datetime)
+      - `publishedAt` (datetime)
+      - `retryCount` (number)
+      - `expiresAt` (number)
+    
+**Table:** `userFeeds`
+  - **Columns:**
+      - `userId` (string - primary key)
+      - `postId` (string)
+      - `score` (float - for ranking posts)
+  - **DB Type:** Redis
 
 ## 5. High-level architecture
 ### CREATE POST-FLOW
