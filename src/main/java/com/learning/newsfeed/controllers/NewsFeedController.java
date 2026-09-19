@@ -37,15 +37,16 @@ public class NewsFeedController {
 
     @RequireScope(Scopes.Posts.WRITE)
     @PostMapping("/posts")
-    public ResponseEntity<?> createPost(
+    public ResponseEntity<CreatePostHandler.CreatePostResult> createPost(
             @RequestHeader("idempotency-key") String idempotencyKey,
             @Valid @RequestBody CreatePostDTO dto,
             @AuthenticationPrincipal Jwt jwt
     ) {
         dto.setUserId(jwt.getSubject());
         dto.setIdempotencyKey(idempotencyKey);
-        createPostHandler.accept(dto);
-        return ResponseEntity.status(HttpStatus.CREATED).build();
+        CreatePostHandler.CreatePostResult result = createPostHandler.create(dto);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(result);
     }
 
     @RequireScope(Scopes.Posts.READ)

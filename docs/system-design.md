@@ -115,7 +115,9 @@ Feeds pagination should use cursor-based pagination rather than offset-based pag
         "mediaIds": ["1", "2", "3"]
     }
     ```
-- Response: 201 CREATED
+- Response: 201 CREATED with the created `postId`. Repeating the same
+  `Idempotency-Key` and request body within 24 hours returns the same `postId`;
+  reusing the key with different content returns 409 Conflict.
 
 ### NEWS FEED
 - Method: GET
