@@ -2,10 +2,12 @@ package com.learning.newsfeed.services;
 
 import com.learning.newsfeed.entities.Follower;
 import com.learning.newsfeed.entities.IdempotencyKey;
+import com.learning.newsfeed.entities.Outbox;
 import com.learning.newsfeed.entities.User;
 import com.learning.newsfeed.repositories.AuthenticationRepository;
 import com.learning.newsfeed.repositories.FollowerRepository;
 import com.learning.newsfeed.repositories.IdempotencyKeyRepository;
+import com.learning.newsfeed.repositories.OutboxRepository;
 import com.learning.newsfeed.repositories.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,7 +24,9 @@ import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsResponse;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
+import tools.jackson.databind.ObjectMapper;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -52,10 +56,12 @@ class FollowRelationshipServiceTest {
         var users = mock(UserRepository.class);
         var followers = mock(FollowerRepository.class);
         var receipts = mock(IdempotencyKeyRepository.class);
+        var outboxes = mock(OutboxRepository.class);
         auth = mock(AuthenticationRepository.class);
         when(users.table()).thenReturn(enhanced.table("users", TableSchema.fromBean(User.class)));
         when(followers.table()).thenReturn(enhanced.table("followers", TableSchema.fromBean(Follower.class)));
         when(receipts.table()).thenReturn(enhanced.table("idempotencyKeys", TableSchema.fromBean(IdempotencyKey.class)));
+        when(outboxes.table()).thenReturn(enhanced.table("outboxes", TableSchema.fromBean(Outbox.class)));
         when(auth.getAuthContext()).thenReturn(Optional.of(
                 UsernamePasswordAuthenticationToken.authenticated("USER#A", "unused", List.of())));
         when(transport.getItem(any(GetItemRequest.class))).thenAnswer(invocation -> {
@@ -72,7 +78,7 @@ class FollowRelationshipServiceTest {
         });
         user("USER#A", 0, 1L);
         user("USER#B", 0, 3L);
-        service = new FollowRelationshipService(users, followers, auth, receipts, enhanced);
+        service = new FollowRelationshipService(users, followers, auth, receipts, outboxes, enhanced);
     }
 
     @Test
@@ -93,6 +99,8 @@ class FollowRelationshipServiceTest {
         assertTrue(userWrite.expressionAttributeNames().containsValue("version"));
         assertTrue(userWrite.expressionAttributeValues().containsValue(n(3)));
         assertEquals(n(4), userWrite.item().get("version"));
+        assertEquals(3, actions.size(), "Follow must not emit UNFOLLOWED");
+        assertEquals(0, outboxCount());
     }
 
     @Test
@@ -131,6 +139,20 @@ class FollowRelationshipServiceTest {
         assertEquals(s("USER#B"), delete.key().get("PK"));
         assertEquals(s("FOLLOWER#USER#A"), delete.key().get("SK"));
         assertEquals("attribute_exists(PK)", delete.conditionExpression());
+        assertEquals(1, outboxCount(), "Unfollow replay must not create another event");
+        var outboxWrite = writes.get(1).transactItems().get(3).put();
+        assertEquals("outboxes", outboxWrite.tableName());
+        assertEquals("attribute_not_exists(PK)", outboxWrite.conditionExpression());
+        var event = outboxWrite.item();
+        assertEquals(s("UNFOLLOWED"), event.get("eventType"));
+        assertEquals(s("PENDING"), event.get("status"));
+        assertEquals(s("USER#A"), event.get("aggregateId"));
+        assertTrue(event.get("PK").s().startsWith("EVENT#"));
+        assertEquals(event.get("PK"), writes.get(1).transactItems().get(0).put().item().get("eventId"));
+        var payload = new ObjectMapper().readTree(event.get("payload").s());
+        assertEquals("USER#A", payload.get("followerId").asString());
+        assertEquals("USER#B", payload.get("authorId").asString());
+        assertDoesNotThrow(() -> Instant.parse(payload.get("unfollowedAt").asString()));
     }
 
     @Test
@@ -145,6 +167,7 @@ class FollowRelationshipServiceTest {
         assertEquals(2, writes.size());
         assertEquals(1, count());
         assertNotNull(edge());
+        assertEquals(0, outboxCount(), "No-op Unfollow must not emit an event");
     }
 
     @Test
@@ -204,6 +227,59 @@ class FollowRelationshipServiceTest {
         assertEquals(0, count());
         assertEquals(4, version());
         assertNotNull(writes.get(1).transactItems().get(1).conditionCheck());
+        assertEquals(0, outboxCount(), "Cancelled delete must not leave an orphan outbox");
+        assertNull(writes.get(1).transactItems().get(0).put().item().get("eventId"));
+    }
+
+    @Test
+    void unfollowVersionRetryReusesOneEventAndCommitsItWithDeletion() {
+        edge(true);
+        user("USER#B", 1, 3L);
+        beforeCommit = request -> {
+            if (writes.size() == 1) {
+                user("USER#B", 2, 4L); // Another follower increments this author's count.
+                throw cancelled("None", "None", "ConditionalCheckFailed", "None");
+            }
+        };
+        service.setFollowing("B", "u1", false);
+        assertEquals(2, writes.size());
+        assertEquals(1, count());
+        assertEquals(5, version());
+        assertNull(edge());
+        assertEquals(1, outboxCount());
+        assertEquals(writes.getFirst().transactItems().get(3).put().item(),
+                writes.get(1).transactItems().get(3).put().item());
+    }
+
+    @Test
+    void simultaneousUnfollowReceiptAndVersionFailuresReplayWithoutAnotherEvent() {
+        edge(true);
+        user("USER#B", 1, 3L);
+        beforeCommit = request -> {
+            commit(request); // Another invocation with the same key already committed all four items.
+            throw cancelled("ConditionalCheckFailed", "ConditionalCheckFailed", "ConditionalCheckFailed", "None");
+        };
+        assertDoesNotThrow(() -> service.setFollowing("B", "u1", false));
+        assertEquals(1, writes.size());
+        assertEquals(1, outboxCount());
+        assertEquals(0, count());
+        assertNull(edge());
+    }
+
+    @Test
+    void outboxFailureDoesNotCommitUnfollowOrReceipt() {
+        edge(true);
+        user("USER#B", 1, 3L);
+        var failure = cancelled("None", "None", "None", "ProvisionedThroughputExceeded");
+        beforeCommit = request -> { throw failure; };
+        assertSame(failure, assertThrows(TransactionCanceledException.class,
+                () -> service.setFollowing("B", "u1", false)));
+        assertEquals(1, writes.size());
+        assertEquals(1, count());
+        assertEquals(3, version());
+        assertNotNull(edge());
+        assertEquals(0, outboxCount());
+        assertNull(items.get("idempotencyKeys|UNFOLLOW#USER#A#u1|"));
     }
 
     @Test
@@ -320,6 +396,7 @@ class FollowRelationshipServiceTest {
     }
 
     private Map<String, AttributeValue> edge() { return items.get("followers|USER#B|FOLLOWER#USER#A"); }
+    private long outboxCount() { return items.keySet().stream().filter(key -> key.startsWith("outboxes|")).count(); }
     private int count() { return Integer.parseInt(items.get("users|USER#B|").get("followersCount").n()); }
     private long version() { return Long.parseLong(items.get("users|USER#B|").get("version").n()); }
     private static AttributeValue s(String value) { return AttributeValue.builder().s(value).build(); }

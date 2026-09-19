@@ -2,11 +2,14 @@ package com.learning.newsfeed.services;
 
 import com.learning.newsfeed.entities.Follower;
 import com.learning.newsfeed.entities.IdempotencyKey;
+import com.learning.newsfeed.entities.Outbox;
 import com.learning.newsfeed.entities.User;
 import com.learning.newsfeed.repositories.AuthenticationRepository;
 import com.learning.newsfeed.repositories.FollowerRepository;
 import com.learning.newsfeed.repositories.IdempotencyKeyRepository;
+import com.learning.newsfeed.repositories.OutboxRepository;
 import com.learning.newsfeed.repositories.UserRepository;
+import com.learning.newsfeed.utils.MapperUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
@@ -28,7 +31,9 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.HexFormat;
+import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 @Service
@@ -36,13 +41,14 @@ import java.util.concurrent.ThreadLocalRandom;
 public class FollowRelationshipService {
 
     private static final int MAX_ATTEMPTS = 3;
-    // Thứ tự transaction cố định: idempotency [0], quan hệ [1], User đích/version [2].
+    // Thứ tự transaction: idempotency [0], quan hệ [1], User/version [2], outbox Unfollow [3].
     private static final int RECEIPT_INDEX = 0;
 
     private final UserRepository userRepository;
     private final FollowerRepository followerRepository;
     private final AuthenticationRepository authenticationRepository;
     private final IdempotencyKeyRepository idempotencyKeyRepository;
+    private final OutboxRepository outboxRepository;
     private final DynamoDbEnhancedClient enhancedClient;
 
     public Follower setFollowing(String targetId, String idempotencyKey, boolean following) {
@@ -85,6 +91,9 @@ public class FollowRelationshipService {
         readUser(actorId);
         Key relationKey = Key.builder().partitionValue(targetKey)
                 .sortValue(relation.getFollowerId()).build();
+        // Chuẩn bị một eventId cố định cho request. Event chỉ được lưu nếu transaction
+        // thực sự xóa quan hệ; retry version không tạo thêm eventId/outbox khác.
+        Outbox unfollowEvent = following ? null : createUnfollowEvent(actorId, targetKey);
 
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             if (attempt > 1 && replayed(receipt)) {
@@ -96,6 +105,10 @@ public class FollowRelationshipService {
             Follower existing = followerRepository.table().getItem(GetItemEnhancedRequest.builder()
                     .key(relationKey).consistentRead(true).build());
             boolean changesRelation = following != (existing != null);
+            boolean emitsUnfollow = !following && changesRelation;
+            // Lưu liên kết đến outbox trong receipt. Nếu retry trở thành no-op thì bỏ liên kết,
+            // vì event ứng viên chưa từng được commit bởi request này.
+            receipt.setEventId(emitsUnfollow ? unfollowEvent.getEventId() : null);
 
             // Bước 5: thêm idempotency ở index 0 để chỉ một request cùng key được commit.
             var transaction = TransactWriteItemsEnhancedRequest.builder()
@@ -145,8 +158,17 @@ public class FollowRelationshipService {
                         .conditionExpression(condition("attribute_exists(PK)")).build());
             }
 
+            // Bước 6c: chỉ khi thực sự Unfollow, ghi UNFOLLOWED vào cùng transaction.
+            // Payload xác định feed của actor và author cần loại bài; worker sau này dùng ZREM
+            // các postId của author ở latest/ranked, không DEL toàn bộ feed của actor.
+            if (emitsUnfollow) {
+                transaction.addPutItem(outboxRepository.table(),
+                        TransactPutItemEnhancedRequest.builder(Outbox.class).item(unfollowEvent)
+                                .conditionExpression(condition("attribute_not_exists(PK)")).build());
+            }
+
             try {
-                // Bước 7: commit nguyên tử idempotency + quan hệ + count/version.
+                // Bước 7: commit nguyên tử idempotency + quan hệ + count/version + outbox (nếu có).
                 enhancedClient.transactWriteItems(transaction.build());
                 // Response chỉ chứa định danh quan hệ để lần đầu, replay và no-op giống nhau.
                 return relation;
@@ -172,6 +194,22 @@ public class FollowRelationshipService {
             }
         }
         throw new IllegalStateException("Unreachable retry state");
+    }
+
+    private record UnfollowedPayload(String followerId, String authorId, String unfollowedAt) {}
+
+    private static Outbox createUnfollowEvent(String actorId, String targetKey) {
+        Instant now = Instant.now();
+        String payload = MapperUtil.toJson(new UnfollowedPayload(actorId, targetKey, now.toString()))
+                .getOrElseThrow(error -> new IllegalStateException("Cannot serialize UNFOLLOWED event", error));
+        return Outbox.builder()
+                .eventId(Outbox.EVENT_PREFIX + UUID.randomUUID())
+                .eventType(Outbox.EventType.UNFOLLOWED)
+                .aggregateId(actorId) // Feed cần dọn thuộc người vừa bỏ follow.
+                .payload(payload)
+                .status(Outbox.EventStatus.PENDING)
+                .createdAt(LocalDateTime.ofInstant(now, ZoneOffset.UTC))
+                .build();
     }
 
     private User readUser(String key) {
