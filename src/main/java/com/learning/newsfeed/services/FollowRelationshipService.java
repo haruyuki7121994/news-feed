@@ -4,7 +4,6 @@ import com.learning.newsfeed.entities.Follower;
 import com.learning.newsfeed.entities.IdempotencyKey;
 import com.learning.newsfeed.entities.Outbox;
 import com.learning.newsfeed.entities.User;
-import com.learning.newsfeed.repositories.AuthenticationRepository;
 import com.learning.newsfeed.repositories.FollowerRepository;
 import com.learning.newsfeed.repositories.IdempotencyKeyRepository;
 import com.learning.newsfeed.repositories.OutboxRepository;
@@ -12,7 +11,6 @@ import com.learning.newsfeed.repositories.UserRepository;
 import com.learning.newsfeed.utils.MapperUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
-import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 import software.amazon.awssdk.enhanced.dynamodb.DynamoDbEnhancedClient;
@@ -46,20 +44,17 @@ public class FollowRelationshipService {
 
     private final UserRepository userRepository;
     private final FollowerRepository followerRepository;
-    private final AuthenticationRepository authenticationRepository;
     private final IdempotencyKeyRepository idempotencyKeyRepository;
     private final OutboxRepository outboxRepository;
     private final DynamoDbEnhancedClient enhancedClient;
 
-    public Follower setFollowing(String targetId, String idempotencyKey, boolean following) {
+    public Follower setFollowing(String authName, String targetId, String idempotencyKey, boolean following) {
         // Bước 1: kiểm tra request và lấy người thao tác từ security context, không từ client.
         if (idempotencyKey == null || !idempotencyKey.matches("[A-Za-z0-9_-]{1,128}")) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid Idempotency-Key");
         }
-        Authentication authentication = authenticationRepository.getAuthContext()
-                .filter(Authentication::isAuthenticated)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED));
-        String actorId = userKey(authentication.getName());
+
+        String actorId = userKey(authName);
         String targetKey = userKey(targetId);
         if (actorId.equals(targetKey)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot follow or unfollow yourself");
@@ -216,7 +211,7 @@ public class FollowRelationshipService {
         User user = userRepository.table().getItem(GetItemEnhancedRequest.builder()
                 .key(k -> k.partitionValue(key)).consistentRead(true).build());
         if (user == null) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found");
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found:" + key);
         }
         return user;
     }

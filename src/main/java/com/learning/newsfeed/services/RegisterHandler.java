@@ -15,7 +15,6 @@ import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledExcepti
 
 import java.time.LocalDateTime;
 import java.util.HashSet;
-import java.util.UUID;
 
 @Slf4j
 @Service
@@ -27,9 +26,10 @@ public class RegisterHandler {
     private final PasswordEncoder passwordEncoder;
     private final DynamoDbEnhancedClient enhancedClient;
 
-    public void handle(String username, String displayName, String password) {
+    public String handle(String username, String displayName, String password) {
+        String userId = User.USER_PREFIX + username;
         User user = User.builder()
-                .userId(User.USER_PREFIX + UUID.randomUUID())
+                .userId(userId)
                 .username(username)
                 .displayName(displayName)
                 .passwordHash(passwordEncoder.encode(password))
@@ -56,5 +56,6 @@ public class RegisterHandler {
         } catch (TransactionCanceledException e) {
             throw new RuntimeException("Register processing failed.", e);
         }
+        return userId;
     }
 }

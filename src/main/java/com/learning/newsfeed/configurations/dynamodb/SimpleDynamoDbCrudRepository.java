@@ -16,6 +16,7 @@ import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Repository
@@ -87,6 +88,11 @@ public abstract class SimpleDynamoDbCrudRepository<T extends DynamoDbBaseEntity>
     @Override
     public void delete(T entity) {
         table().deleteItem(entity);
+    }
+
+    @Override
+    public List<T> scanAll() {
+        return table().scan().items().stream().collect(Collectors.toList());
     }
 
     protected Key buildKey(Object pk, Object sk) {

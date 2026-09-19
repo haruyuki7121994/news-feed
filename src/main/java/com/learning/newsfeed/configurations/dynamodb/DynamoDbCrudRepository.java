@@ -12,6 +12,7 @@ public interface DynamoDbCrudRepository<T extends DynamoDbBaseEntity> {
     Optional<T> query(String pk);
     Optional<T> query(String pk, String sk);
     List<T> queryAll(String pk);
+    List<T> scanAll();
     DynamoPaginatedResult<T> queryCursor(String pk, DynamoPaginator paginator);
     void save(T entity);
     T update(T entity);
