@@ -25,24 +25,24 @@ public class Follower implements DynamoDbBaseEntity {
             @DynamoDbPartitionKey,
             @DynamoDbAttribute("PK")
     })
-    private String userId; // Giá trị lưu: USER#{userId}
+    private String userId; // Author được follow: USER#B khi A follow B.
 
     @Getter(onMethod_ = {
             @DynamoDbSortKey,
             @DynamoDbAttribute("SK")
     })
-    private String followerId; // Giá trị lưu: FOLLOWER#{followerId}
+    private String followerId; // Người đi follow: FOLLOWER#USER#A.
     private LocalDateTime createdAt;
 
     @Getter(onMethod_ = {
             @DynamoDbSecondaryPartitionKey(indexNames = "GSI1"),
             @DynamoDbAttribute("GSI1PK")
     })
-    private String followingPk;
+    private String followingPk; // FOLLOWER#USER#A: query các author mà A đang follow.
 
     @Getter(onMethod_ = {
             @DynamoDbSecondarySortKey(indexNames = "GSI1"),
             @DynamoDbAttribute("GSI1SK")
     })
-    private String followingSk;
+    private String followingSk; // USER#B.
 }
